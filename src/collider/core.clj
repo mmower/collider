@@ -175,13 +175,17 @@
   (let [g (atom (create-grid 8 8 32 4))
         c (async/chan 10)
         t (async/timeout 30000)
-        n (metronome 120)]
+        n (metronome 120)
+        k (sample (freesound-path 2086))]
     (async/go
       (loop []
         (let [[v ch] (async/alts! [c t])]
           (if (= ch t)
-            (println "Timeout")
             (do
+              (println "Timeout")
+              (stop))
+            (do
+              (k)
               (println "Received " v)
               (recur))))))
     (grid-runner n g c)))
