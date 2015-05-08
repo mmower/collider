@@ -3,6 +3,18 @@
   (:require [clojure.math.combinatorics :as comb]
             [clojure.core.async :as async]))
 
+; The grid model is a vector of vector of vectors. For a grid sized [w h]
+; we will have w vectors representing columns each containing h vectors
+; representing rows containing a vector of the objects located in that
+; column:row. Each object will be represented by a map containing a value
+; for the key :kind that determines if it is a :particle that moves or a
+; :detector that detects the presence of particles and responds to them.
+
+; Musically we respond to particles being detected by passing detector
+; collisions to a core.async channel that can, e.g., play a sound. The
+; grid processing can be driven by a metronome to have these things
+; happen at a particular tempo.
+
 (def cardinal-directions [:n :ne :e :se :s :sw :w :nw])
 
 (defn random-direction []
@@ -205,21 +217,30 @@
     (at (nome beat) (swap! grid run-grid chan))
     (apply-by (nome (inc beat)) grid-runner [nome grid chan])))
 
+(definst grainer [b 0
+                  center-pos 0]
+         (let [trate 10
+               dur (/ 2 trate)]
+           (t-grains:ar 1 (impulse:ar trate) b 1 center-pos dur 0 0.8 2)))
+
 (comment
   (let [g (atom (create-grid 8 8 32 4))
         c (async/chan 10)
         t (async/timeout 30000)
         n (metronome 120)
-        k (sample (freesound-path 2086))]
+        b (load-sample "~/Documents/Samples/Samplism/Memory Collection/MC01_all/Music/BD_chopsticks_end.wav")
+        s (grainer b)]
     (async/go
       (loop []
         (let [[v ch] (async/alts! [c t])]
           (if (= ch t)
             (do
-              (println "Timeout")
+              (println "Stop")
               (stop))
             (do
-              (k)
-              (println "Received " v)
+              (let [{:keys [id]} (:detector v)
+                    {:keys [slice]} (:particle v)
+                    _ (println "Slice:" slice "pos:" (* slice (:duration (buffer-info b))))]
+                (ctl s :center-pos (* slice (/ (:duration (buffer-info b)) 32))))
               (recur))))))
     (grid-runner n g c)))
