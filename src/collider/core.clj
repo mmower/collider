@@ -1,7 +1,8 @@
 (ns collider.core
   (:use overtone.live)
   (:require [clojure.math.combinatorics :as comb]
-            [clojure.core.async :as async]))
+            [clojure.core.async :as async]
+            [collider.buffer :refer [buffer-mix-to-mono]]))
 
 ; The grid model is a vector of vector of vectors. For a grid sized [w h]
 ; we will have w vectors representing columns each containing h vectors
@@ -218,29 +219,47 @@
     (apply-by (nome (inc beat)) grid-runner [nome grid chan])))
 
 (definst grainer [b 0
-                  center-pos 0]
+                  center-pos 0
+                  amp 0.25]
          (let [trate 10
-               dur (/ 2 trate)]
-           (t-grains:ar 1 (impulse:ar trate) b 1 center-pos dur 0 0.8 2)))
+               dur   (/ 2 trate)]
+           (t-grains:ar 1 (impulse:ar trate) b 1.0 center-pos dur 0 0.4 2)))
+
+
+(def sample-files ["~/Documents/Samples/Samplism/Memory Collection/MC01_all/Music/BD_chopsticks_end.wav"
+                   "~/Documents/Samples/Samplism/Dead Piano/Kontakt/Dead Piano Nuances/detuned scrapes.wav"
+                   "~/Documents/Samples/Cosmo D's Soundbank Vol. 2 Examples/loops/80-g-major-pizz-3.wav"
+                   "~/Documents/Samples/RadioPhonica/Wav/Pulses/RP_Grunge_Drone.wav"])
+
+(def slices 32)
+
+(defn play [samplers {:keys           [energy]
+                      {:keys [id]}    :detector
+                      {:keys [slice]} :particle}]
+  (let [sampler  (nth (:samplers samplers) id)
+        buffer   (nth (:buffers samplers) id)
+        duration (:duration (buffer-info buffer))
+        position (* slice (/ duration slices))]
+    (ctl sampler :center-pos position)
+    (ctl sampler :amp (* 0.5 (/ energy 100)))))
+
+(defn load-samplers []
+  (let [buffers  (map (comp buffer-mix-to-mono load-sample) sample-files)
+        samplers (map grainer buffers)]
+    {:buffers  buffers
+     :samplers samplers}))
 
 (comment
-  (let [g (atom (create-grid 8 8 32 4))
-        c (async/chan 10)
-        t (async/timeout 30000)
-        n (metronome 120)
-        b (load-sample "~/Documents/Samples/Samplism/Memory Collection/MC01_all/Music/BD_chopsticks_end.wav")
-        s (grainer b)]
+  (let [grid (atom (create-grid 8 8 slices 4))
+        chan (async/chan 10)
+        tout (async/timeout 30000)
+        nome (metronome 120)
+        samp (load-samplers)]
     (async/go
-      (loop []
-        (let [[v ch] (async/alts! [c t])]
-          (if (= ch t)
-            (do
-              (println "Stop")
-              (stop))
-            (do
-              (let [{:keys [id]} (:detector v)
-                    {:keys [slice]} (:particle v)
-                    _ (println "Slice:" slice "pos:" (* slice (:duration (buffer-info b))))]
-                (ctl s :center-pos (* slice (/ (:duration (buffer-info b)) 32))))
-              (recur))))))
-    (grid-runner n g c)))
+      (loop [[val _] (async/alts! [chan tout])]
+        (if val
+          (do
+            (play samp val)
+            (recur (async/alts! [chan tout])))
+          (stop))))
+    (grid-runner nome grid chan)))
